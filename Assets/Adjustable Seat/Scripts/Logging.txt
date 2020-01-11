@@ -1,0 +1,34 @@
+logger = {enabled = false}
+
+logger.log = function(logEntry, data, enabled)
+    enabled = logger.enabled or enabled
+    if enabled then
+        local payload = ''
+        if data ~= nil then
+            if type(data) == 'table' then
+                payload = ' - (table) length: ' .. tostring(#data) .. ' - values: ' .. json.serialize(data)
+            else
+                payload = ' - ' .. tostring(data)
+            end
+        end
+        if Space.Host.ExecutingObject.Root.Name ~= Space.Host.ExecutingObject.Name then
+            Space.Log(
+                string.format('%09.4f', Space.Time) ..
+                    ' - ' ..
+                        Space.Scene.PlayerAvatar.Username ..
+                            ' - ' ..
+                                Space.Host.ExecutingObject.Root.Name ..
+                                    ' - ' .. Space.Host.ExecutingObject.Name .. ' - ' .. logEntry .. payload,
+                                    enabled
+            )
+        else
+            Space.Log(
+                string.format('%09.4f', Space.LocalTimeUnix) ..
+                    ' - ' ..
+                        Space.Scene.PlayerAvatar.Username ..
+                            ' - ' .. Space.Host.ExecutingObject.Name .. ' - ' .. logEntry .. payload,
+                            enabled
+            )
+        end
+    end
+end

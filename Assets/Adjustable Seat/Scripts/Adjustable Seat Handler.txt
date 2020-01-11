@@ -1,0 +1,260 @@
+Space = Space or {}
+logger = logger or {}
+Quaternion = Quaternion or {}
+Vector = Vector or {}
+
+channel = 'seat.adjustable'
+
+local isChanged = false
+local freeze = false
+
+local defaultConfig = {
+    rotX = 0,
+    rotY = 0,
+    rotZ = 0,
+    posX = 0,
+    posY = 0,
+    posZ = 0
+}
+
+local settings = nil
+local slotId
+local defaultAnim = 'Default'
+
+local channelKey
+local seated = nil
+
+local availablePoses = {}
+
+function applySettings()
+    local currentConfig
+    if settings['currentAnim'] == nil or settings['currentAnim'] == '' then
+        settings['currentAnim'] = 'Default'
+    end
+    if settings[settings['currentAnim']] == nil then
+        settings[settings['currentAnim']] = json.parse(json.serialize(defaultConfig))
+    end
+    currentConfig = settings[settings['currentAnim']]
+
+    local seat = Space.Host.GetReference('seat')
+    if seat.Seat.InUse then
+        for i = 1, #availablePoses, 1 do
+            if availablePoses[i].name == settings['currentAnim'] then
+                Space.Scene.GetAvatar(seat.Seat.PlayerSeated).PlayCustomAnimation(availablePoses[i].anim)
+            end
+        end
+    end
+
+    local seatMover = Space.Host.GetReference('seatMover')
+
+    local rot = Quaternion.Euler(currentConfig.rotX, currentConfig.rotY, currentConfig.rotZ)
+    seatMover.LocalRotation = rot
+
+    local basePos = Vector.New(currentConfig.posX, currentConfig.posY, currentConfig.posZ)
+
+    seatMover.LocalPosition = basePos
+end
+
+function update()
+    if not freeze then
+        local currentConfig = settings[settings['currentAnim']]
+        currentConfig.rotX = Space.Host.GetReference('rotX').UISlider.Value
+        currentConfig.rotY = Space.Host.GetReference('rotY').UISlider.Value
+        currentConfig.rotZ = Space.Host.GetReference('rotZ').UISlider.Value
+        currentConfig.posX = Space.Host.GetReference('posX').UISlider.Value
+        currentConfig.posY = Space.Host.GetReference('posY').UISlider.Value
+        currentConfig.posZ = Space.Host.GetReference('posZ').UISlider.Value
+
+        isChanged = true
+
+        applySettings()
+    end
+end
+
+function doChangePose(index)
+    local seat = Space.Host.GetReference('seat')
+
+    if seat.Seat.InUse then
+        Space.Scene.GetAvatar(seat.Seat.PlayerSeated).StopCustomAnimation()
+        seated = seat.Seat.PlayerSeated
+    end
+
+    logger.log('index', index)
+    logger.log('availablePoses', availablePoses)
+    local current = availablePoses[index]
+
+    logger.log('changing animation to', current)
+
+    settings['currentAnim'] = current.name
+    if settings[settings['currentAnim']] == nil then
+        settings[settings['currentAnim']] = json.parse(json.serialize(defaultConfig))
+    end
+
+    applySettings()
+end
+
+function changePose()
+    if not freeze then
+        local poses = Space.Host.GetReference('pose')
+        local selected = poses.UIDropdown.Value + 1
+
+        logger.log('selected pose', selected)
+
+        Space.Host.StartCoroutine(doChangePose, selected, 'execute pose change')
+    end
+end
+
+function sitStart()
+    updateDialog(settings['currentAnim'])
+    applySettings()
+end
+
+function sitStop()
+    if seated ~= nil then
+        Space.Scene.GetAvatar(seated).StopCustomAnimation()
+        seated = nil
+    end
+end
+
+function updateDialog(anim)
+    freeze = true
+    if settings == nil then
+        settings = {}
+    end
+    if settings[anim] == nil then
+        settings[anim] = json.parse(json.serialize(defaultConfig))
+    end
+
+    local currentConfig = settings[anim]
+
+    local rotX = Space.Host.GetReference('rotX')
+    rotX.UISlider.Value = currentConfig.rotX
+    local rotY = Space.Host.GetReference('rotY')
+    rotY.UISlider.Value = currentConfig.rotY
+    local rotZ = Space.Host.GetReference('rotZ')
+    rotZ.UISlider.Value = currentConfig.rotZ
+    local posX = Space.Host.GetReference('posX')
+    posX.UISlider.Value = currentConfig.posX
+    local posY = Space.Host.GetReference('posY')
+    posY.UISlider.Value = currentConfig.posY
+    local posZ = Space.Host.GetReference('posZ')
+    posZ.UISlider.Value = currentConfig.posZ
+
+    local poses = Space.Host.GetReference('pose')
+    poses.UIDropdown.ClearOptions()
+    local poseList = {}
+    local currentPoseIndex = 1
+    for i = 1, #availablePoses, 1 do
+        table.insert(poseList, #poseList + 1, availablePoses[i].name)
+        if availablePoses.name == anim then
+            currentPoseIndex = i - 1
+        end
+    end
+    poses.UIDropdown.AddOptions(poseList)
+
+    poses.UIDropdown.Value = currentPoseIndex
+
+    freeze = false
+end
+
+function reset()
+    settings[settings['currentAnim']] = json.parse(json.serialize(defaultConfig))
+
+    updateDialog(settings['currentAnim'])
+    applySettings()
+end
+
+function monitorChanges()
+    while true do
+        if isChanged then
+            isChanged = false
+            local update = {}
+            update.command = 'storeConfig'
+            update.source = Space.Host.ExecutingObject.GlobalID
+            update.settings = settings
+            Space.Network.SendNetworkMessage(channelKey, update, false)
+        end
+        coroutine.yield(0.5)
+    end
+end
+
+function onRecieve(data)
+    logger.log('onRecieve', data)
+    settings = data.Message
+    updateDialog(settings['currentAnim'])
+    applySettings()
+end
+
+function onConfigRecieve(data)
+    logger.log('onConfigRecieve', data)
+    local update = data.Message
+    if update.command == 'setConfig' and update.target == Space.Host.ExecutingObject.GlobalID then
+        settings = update.settings
+        updateDialog(settings['currentAnim'])
+        applySettings()
+    end
+end
+
+function activateSeat()
+    logger.log('Activating seat')
+    if settings == nil then
+        settings = {}
+        settings['currentAnim'] = defaultAnim
+        settings[defaultAnim] = json.parse(json.serialize(defaultConfig))
+    end
+
+    local tmpPoses = Space.Shared.GetGlobal(channel, 'availablePoses')
+
+    availablePoses = {}
+    table.insert(availablePoses, 1, {name = 'Default', anim = Space.Resources[1]})
+    if tmpPoses ~= nil and #tmpPoses > 0 then
+        for i = 1, #tmpPoses, 1 do
+            if tmpPoses[i].name ~= 'Default' then
+                table.insert(availablePoses, #availablePoses + 1, tmpPoses[i])
+            end
+        end
+    end
+
+    logger.log('pose collection complete, activating')
+    local seat = Space.Host.GetReference('seat')
+    seat.Active = true
+end
+
+function collectPoses()
+    local command = {}
+    command.command = 'getConfig'
+    command.player = Space.Scene.PlayerAvatar.ID
+    command.source = Space.Host.ExecutingObject.GlobalID
+    logger.log('requesting config from server', command)
+    Space.Network.SendNetworkMessage(channel, command, true, false)
+
+    Space.Host.InvokeDelayed(activateSeat, 2)
+end
+
+function saveData()
+    logger.log('saveData')
+    local command = {}
+    command.command = 'storeConfig'
+    command.player = Space.Scene.PlayerAvatar.ID
+    command.source = Space.Host.ExecutingObject.GlobalID
+    command.settings = settings
+    logger.log('sending', command)
+    Space.Network.SendNetworkMessage(channel, command, true, false)
+end
+
+function init()
+    local seat = Space.Host.GetReference('seat')
+    seat.Active = false
+    slotId = seat.Seat.SlotID
+
+    channelKey = 'seat_' .. slotId .. '_' .. Space.Host.ExecutingObject.GlobalID
+
+    Space.Network.SubscribeToNetwork(channelKey, onRecieve)
+    Space.Network.SubscribeToNetwork(channel, onConfigRecieve)
+    Space.Host.StartCoroutine(monitorChanges, nil)
+
+    Space.Host.StartCoroutine(collectPoses, nil)
+end
+
+logger.enabled = true
+init()

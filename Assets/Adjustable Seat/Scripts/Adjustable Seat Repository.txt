@@ -1,0 +1,51 @@
+channel = 'seat.adjustable'
+
+function collectPoses()
+    coroutine.yield(0)
+    logger.log('collect poses')
+    local tmpPoses = {}
+    local repos = Space.Host.ExecutingObject.Root.GetScriptsInChildren('SeatPoseRepository')
+    logger.log('found repos', #repos)
+    for i = 1, #repos, 1 do
+        local repo = repos[i]
+        if repo ~= nil then
+            logger.log('processing resources', #repo.Resources)
+            for k = 1, #repo.Resources, 1 do
+                local res = repo.Resources[k]
+                logger.log('processing:', res)
+                logger.log('name', res.Name)
+                tmpPoses[res.Name] = res
+            end
+            logger.log('processing resources complete')
+        end
+        coroutine.yield(0)
+    end
+
+    logger.log('collected tmp poses', tmpPoses)
+
+    local availablePoses = Space.Shared.GetGlobal(channel, 'availablePoses')
+    if availablePoses == nil then
+        availablePoses = {}
+    end
+    for k, v in pairs(tmpPoses) do
+        local found = false
+        for j = 1, #availablePoses, 1 do
+            if availablePoses[j] == k then
+                found = true
+            end
+        end
+        if not found then
+            table.insert(availablePoses, #availablePoses + 1, {name = k, anim = v})
+        end
+    end
+
+    logger.log('collected availablePoses', availablePoses)
+
+    Space.Shared.SetGlobal(channel, 'availablePoses', availablePoses)
+end
+
+function init()
+    Space.Host.StartCoroutine(collectPoses)
+end
+
+init()

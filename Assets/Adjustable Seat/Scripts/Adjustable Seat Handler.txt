@@ -256,5 +256,4 @@ function init()
     Space.Host.StartCoroutine(collectPoses, nil)
 end
 
-logger.enabled = true
 init()

@@ -130,7 +130,4 @@ function init()
     logger.log('startup complete')
 end
 
-logger.enabled = true
-
-
 init()

@@ -60,16 +60,22 @@ end
 function processMessage(data)
     logger.log('processMessage', data)
     if data.command == 'getConfig' then
-        if settings ~= nil and settings[data.source] ~= nil then
+        local settingsKey = data.source
+        if data.seat ~= nil then
+            settingsKey = settingsKey .. '_' .. data.seat
+        end
+        if settings ~= nil and settings[settingsKey] ~= nil then
             local update = {}
             update.command = 'setConfig'
             update.target = data.source
-            update.settings = settings[data.source]
+            update.settings = settings[settingsKey]
+            update.seat = data.seat
             sendOne(data.player, update)
         elseif isEditor then
             local update = {}
             update.command = 'setConfig'
             update.target = data.source
+            update.seat = data.seat
             update.settings = {}
             sendOne(data.player, update)
         end
@@ -77,12 +83,18 @@ function processMessage(data)
         if settings == nil then
             settings = {}
         end
-        settings[data.source] = data.settings
+        local settingsKey = data.source
+        if data.seat ~= nil then
+            settingsKey = settingsKey .. '_' .. data.seat
+        end
+        settings[settingsKey] = data.settings
 
         local update = {}
         update.command = 'setConfig'
         update.target = data.source
-        update.settings = settings[data.source]
+        update.settings = settings[settingsKey]
+        update.player = data.player
+        update.seat = data.seat
         sendAll(update)
 
         logger.log('storing settings', settings)

@@ -18,7 +18,6 @@ local defaultConfig = {
 }
 
 local settings = nil
-local slotId
 local defaultAnim = 'Default'
 
 local channelKey
@@ -27,6 +26,8 @@ local seated = nil
 local availablePoses = {}
 
 function applySettings()
+    local preFreeze = freeze
+    freeze = true
     local currentConfig
     if settings['currentAnim'] == nil or settings['currentAnim'] == '' then
         settings['currentAnim'] = 'Default'
@@ -40,7 +41,10 @@ function applySettings()
     if seat.Seat.InUse then
         for i = 1, #availablePoses, 1 do
             if availablePoses[i].name == settings['currentAnim'] then
-                Space.Scene.GetAvatar(seat.Seat.PlayerSeated).PlayCustomAnimation(availablePoses[i].anim)
+                seated = seat.Seat.PlayerSeated
+                logger.log('found anim', availablePoses[i].anim.name)
+                Space.Scene.GetAvatar(seated).PlayCustomAnimation(availablePoses[i].anim)
+                break
             end
         end
     end
@@ -53,9 +57,11 @@ function applySettings()
     local basePos = Vector.New(currentConfig.posX, currentConfig.posY, currentConfig.posZ)
 
     seatMover.LocalPosition = basePos
+    freeze = preFreeze
 end
 
 function update()
+    local preFreeze = freeze
     if not freeze then
         local currentConfig = settings[settings['currentAnim']]
         currentConfig.rotX = Space.Host.GetReference('rotX').UISlider.Value
@@ -69,6 +75,7 @@ function update()
 
         applySettings()
     end
+    freeze = preFreeze
 end
 
 function doChangePose(index)
@@ -81,7 +88,20 @@ function doChangePose(index)
 
     logger.log('index', index)
     logger.log('availablePoses', availablePoses)
-    local current = availablePoses[index]
+
+    local current
+
+    for i = 1, #availablePoses, 1 do
+        if availablePoses[i].name == index then
+            logger.log('found anim', availablePoses[i].anim.name)
+            current = availablePoses[i]
+            break
+        end
+    end
+
+    if current == nil then
+        current = availablePoses[1]
+    end
 
     logger.log('changing animation to', current)
 
@@ -91,6 +111,8 @@ function doChangePose(index)
     end
 
     applySettings()
+
+    isChanged = true
 end
 
 function changePose()
@@ -99,13 +121,18 @@ function changePose()
         local selected = poses.UIDropdown.Value + 1
 
         logger.log('selected pose', selected)
+        logger.log('selected pose', poses.UIDropdown.CaptionText.text)
 
-        Space.Host.StartCoroutine(doChangePose, selected, 'execute pose change')
+        Space.Host.StartCoroutine(doChangePose, poses.UIDropdown.CaptionText.text, 'execute pose change')
     end
 end
 
 function sitStart()
     updateDialog(settings['currentAnim'])
+    if seated == nil then
+	    local seat = Space.Host.GetReference('seat')
+        seated = seat.Seat.PlayerSeated
+    end
     applySettings()
 end
 
@@ -117,9 +144,13 @@ function sitStop()
 end
 
 function updateDialog(anim)
+    local preFreeze = freeze
     freeze = true
     if settings == nil then
         settings = {}
+    end
+    if anim == nil or anim == '' then
+        anim = defaultAnim
     end
     if settings[anim] == nil then
         settings[anim] = json.parse(json.serialize(defaultConfig))
@@ -147,14 +178,14 @@ function updateDialog(anim)
     for i = 1, #availablePoses, 1 do
         table.insert(poseList, #poseList + 1, availablePoses[i].name)
         if availablePoses.name == anim then
-            currentPoseIndex = i - 1
+            currentPoseIndex = i
         end
     end
     poses.UIDropdown.AddOptions(poseList)
 
     poses.UIDropdown.Value = currentPoseIndex
 
-    freeze = false
+    freeze = preFreeze
 end
 
 function reset()
@@ -169,30 +200,42 @@ function monitorChanges()
         if isChanged then
             isChanged = false
             local update = {}
-            update.command = 'storeConfig'
-            update.source = Space.Host.ExecutingObject.GlobalID
-            update.settings = settings
-            Space.Network.SendNetworkMessage(channelKey, update, false)
+            update.command = 'setTempConfig'
+            update.source = Space.Host.ExecutingObject.Root.GlobalID
+            update.seat = Space.Host.ExecutingObject.Name
+            update.settings = settings[settings['currentAnim']]
+            update.anim = settings['currentAnim']
+            update.player = seated
+            logger.log('sending temp data', update)
+            Space.Network.SendNetworkMessage(channelKey, update, false, false)
         end
         coroutine.yield(0.5)
     end
 end
 
-function onRecieve(data)
-    logger.log('onRecieve', data)
-    settings = data.Message
-    updateDialog(settings['currentAnim'])
-    applySettings()
-end
-
 function onConfigRecieve(data)
     logger.log('onConfigRecieve', data)
+    freeze = true
     local update = data.Message
-    if update.command == 'setConfig' and update.target == Space.Host.ExecutingObject.GlobalID then
+    if
+        update.command == 'setConfig' and update.target == Space.Host.ExecutingObject.Root.GlobalID and
+            update.seat == Space.Host.ExecutingObject.Name
+     then
         settings = update.settings
         updateDialog(settings['currentAnim'])
         applySettings()
+    elseif
+        update.command == 'setTempConfig' and update.source == Space.Host.ExecutingObject.Root.GlobalID and
+            update.seat == Space.Host.ExecutingObject.Name and update.player ~= Space.Scene.PlayerAvatar.ID
+     then
+        logger.log('updating temp settings', update)
+        settings['currentAnim'] = update.anim
+        settings[settings['currentAnim']] = update.settings
+        logger.log('new settings', settings)
+        updateDialog(settings['currentAnim'])
+        applySettings()
     end
+    freeze = false
 end
 
 function activateSeat()
@@ -224,7 +267,8 @@ function collectPoses()
     local command = {}
     command.command = 'getConfig'
     command.player = Space.Scene.PlayerAvatar.ID
-    command.source = Space.Host.ExecutingObject.GlobalID
+    command.source = Space.Host.ExecutingObject.Root.GlobalID
+    command.seat = Space.Host.ExecutingObject.Name
     logger.log('requesting config from server', command)
     Space.Network.SendNetworkMessage(channel, command, true, false)
 
@@ -236,7 +280,8 @@ function saveData()
     local command = {}
     command.command = 'storeConfig'
     command.player = Space.Scene.PlayerAvatar.ID
-    command.source = Space.Host.ExecutingObject.GlobalID
+    command.source = Space.Host.ExecutingObject.Root.GlobalID
+    command.seat = Space.Host.ExecutingObject.Name
     command.settings = settings
     logger.log('sending', command)
     Space.Network.SendNetworkMessage(channel, command, true, false)
@@ -245,11 +290,11 @@ end
 function init()
     local seat = Space.Host.GetReference('seat')
     seat.Active = false
-    slotId = seat.Seat.SlotID
 
-    channelKey = 'seat_' .. slotId .. '_' .. Space.Host.ExecutingObject.GlobalID
+    channelKey = 'seat_' .. Space.Host.ExecutingObject.Root.GlobalID .. '_' .. Space.Host.ExecutingObject.Name
+    logger.log('channelKey', channelKey)
 
-    Space.Network.SubscribeToNetwork(channelKey, onRecieve)
+    Space.Network.SubscribeToNetwork(channelKey, onConfigRecieve)
     Space.Network.SubscribeToNetwork(channel, onConfigRecieve)
     Space.Host.StartCoroutine(monitorChanges, nil)
 

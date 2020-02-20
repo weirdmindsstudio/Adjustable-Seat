@@ -15,6 +15,7 @@ function collectPoses()
                 logger.log('processing:', res)
                 logger.log('name', res.Name)
                 tmpPoses[res.Name] = res
+                coroutine.yield(0)
             end
             logger.log('processing resources complete')
         end
